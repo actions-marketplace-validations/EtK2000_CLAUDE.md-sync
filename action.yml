@@ -1,0 +1,59 @@
+name: 'Sync CLAUDE.md'
+description: 'Sync CLAUDE.md from a central source-of-truth repo. Opens or updates a PR when the file drifts.'
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  source-repo:
+    description: 'Owner/repo that holds the canonical CLAUDE.md (e.g. my-org/claude-configs)'
+    required: true
+  source-ref:
+    description: 'Git ref (branch/tag) to fetch from the source repo'
+    required: false
+    default: 'master'
+  source-path:
+    description: 'Path to the file inside the source repo'
+    required: false
+    default: 'CLAUDE.md'
+  target-path:
+    description: 'Where to place the file in the consumer repo'
+    required: false
+    default: 'CLAUDE.md'
+  pr-title:
+    description: 'Title for the sync PR'
+    required: false
+    default: 'chore: sync CLAUDE.md from upstream'
+  branch-name:
+    description: 'Branch name for the sync PR'
+    required: false
+    default: 'claude-md-sync/update'
+  target-branch:
+    description: 'Branch the PR targets and is based off (defaults to the repo default branch)'
+    required: false
+    default: ''
+  pr-labels:
+    description: 'Comma-separated labels to apply to the PR'
+    required: false
+    default: 'automated'
+  token:
+    description: 'GitHub token with contents:write and pull-requests:write permissions'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Sync CLAUDE.md
+      shell: bash
+      env:
+        INPUT_SOURCE_REPO: ${{ inputs.source-repo }}
+        INPUT_SOURCE_REF: ${{ inputs.source-ref }}
+        INPUT_SOURCE_PATH: ${{ inputs.source-path }}
+        INPUT_TARGET_PATH: ${{ inputs.target-path }}
+        INPUT_PR_TITLE: ${{ inputs.pr-title }}
+        INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
+        INPUT_TARGET_BRANCH: ${{ inputs.target-branch }}
+        INPUT_PR_LABELS: ${{ inputs.pr-labels }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: bash "${{ github.action_path }}/sync.sh"

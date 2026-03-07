@@ -1,0 +1,382 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  test-no-local-file:
+    name: "Test: no local CLAUDE.md"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/no-local-file
+      SYNC_BRANCH: claude-md-sync/test-no-local-file
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          rm -f CLAUDE.md
+          git add -A
+          git commit -m "test: remove CLAUDE.md for integration test" --allow-empty
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: Run sync action
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (no local file)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert PR was created
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [[ -z "$PR" ]]; then
+            echo "::error::Expected a PR to be created but none found"
+            exit 1
+          fi
+          echo "PR #${PR} created successfully"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            gh pr close "$PR" --delete-branch || true
+          fi
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-outdated-file:
+    name: "Test: outdated CLAUDE.md"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/outdated-file
+      SYNC_BRANCH: claude-md-sync/test-outdated-file
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch with stale file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          echo "# stale content" > CLAUDE.md
+          git add CLAUDE.md
+          git commit -m "test: add stale CLAUDE.md for integration test"
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: Run sync action
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (outdated file)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert PR was created
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [[ -z "$PR" ]]; then
+            echo "::error::Expected a PR to be created but none found"
+            exit 1
+          fi
+          echo "PR #${PR} created successfully"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            gh pr close "$PR" --delete-branch || true
+          fi
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-up-to-date:
+    name: "Test: already up to date"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/up-to-date
+      SYNC_BRANCH: claude-md-sync/test-up-to-date
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch with current file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: Run sync action
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (up to date)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert no PR was created
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            echo "::error::Expected no PR but found PR #${PR}"
+            exit 1
+          fi
+          echo "No PR created — correct for up-to-date case"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-existing-pr-update:
+    name: "Test: existing PR gets updated"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/existing-pr-update
+      SYNC_BRANCH: claude-md-sync/test-existing-pr-update
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          echo "# stale content" > CLAUDE.md
+          git add CLAUDE.md
+          git commit -m "test: add stale CLAUDE.md for PR update test"
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: "Run sync action (first time — creates PR)"
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (PR update test)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert PR was created and record its number
+        id: first-pr
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [[ -z "$PR" ]]; then
+            echo "::error::Expected first run to create a PR but none found"
+            exit 1
+          fi
+          echo "First run created PR #${PR}"
+          echo "number=$PR" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: "Run sync action (second time — should update existing PR)"
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (PR update test)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert same PR was updated with a comment
+        run: |
+          PR="${{ steps.first-pr.outputs.number }}"
+          COMMENTS=$(gh pr view "$PR" --json comments -q '.comments | length')
+          if [[ "$COMMENTS" -lt 1 ]]; then
+            echo "::error::Expected at least 1 comment on PR #${PR} but found ${COMMENTS}"
+            exit 1
+          fi
+          echo "PR #${PR} was updated with a comment — correct"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            gh pr close "$PR" --delete-branch || true
+          fi
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-custom-source-path:
+    name: "Test: custom source-path"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/custom-source-path
+      SYNC_BRANCH: claude-md-sync/test-custom-source-path
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: Run sync action with custom source-path
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          source-path: test/fixtures/CLAUDE-alt.md
+          target-path: CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (custom source-path)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert PR was created with correct content
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [[ -z "$PR" ]]; then
+            echo "::error::Expected a PR to be created but none found"
+            exit 1
+          fi
+          DIFF=$(gh pr diff "$PR")
+          if ! echo "$DIFF" | grep -q "CLAUDE-alt.md (test fixture)"; then
+            echo "::error::PR diff does not contain expected content from CLAUDE-alt.md"
+            echo "Diff was:"
+            echo "$DIFF"
+            exit 1
+          fi
+          echo "PR #${PR} created with correct content from CLAUDE-alt.md"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            gh pr close "$PR" --delete-branch || true
+          fi
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-custom-target-path:
+    name: "Test: custom target-path"
+    runs-on: ubuntu-latest
+    env:
+      TEST_BRANCH: test/custom-target-path
+      SYNC_BRANCH: claude-md-sync/test-custom-target-path
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup test branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$TEST_BRANCH"
+          git push --force origin "$TEST_BRANCH"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.TEST_BRANCH }}
+
+      - name: Run sync action with custom target-path
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          source-path: CLAUDE.md
+          target-path: docs/CLAUDE.md
+          target-branch: ${{ env.TEST_BRANCH }}
+          branch-name: ${{ env.SYNC_BRANCH }}
+          pr-title: "test: sync CLAUDE.md (custom target-path)"
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert PR was created and file is in correct location
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [[ -z "$PR" ]]; then
+            echo "::error::Expected a PR to be created but none found"
+            exit 1
+          fi
+          FILES=$(gh pr diff "$PR" --name-only)
+          if ! echo "$FILES" | grep -q "^docs/CLAUDE.md$"; then
+            echo "::error::Expected docs/CLAUDE.md in PR diff but got: ${FILES}"
+            exit 1
+          fi
+          echo "PR #${PR} created with docs/CLAUDE.md — correct"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' || true)
+          if [[ -n "$PR" ]]; then
+            gh pr close "$PR" --delete-branch || true
+          fi
+          git push origin --delete "$TEST_BRANCH" 2>/dev/null || true
+
+  test-source-fetch-fails:
+    name: "Test: source fetch fails"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run sync action with nonexistent source file
+        id: sync
+        continue-on-error: true
+        uses: ./
+        with:
+          source-repo: ${{ github.repository }}
+          source-ref: master
+          source-path: does-not-exist.md
+          target-path: CLAUDE.md
+          branch-name: claude-md-sync/test-fetch-fail
+          pr-labels: "automated,do-not-merge"
+
+      - name: Assert action failed
+        run: |
+          if [[ "${{ steps.sync.outcome }}" != "failure" ]]; then
+            echo "::error::Expected action to fail but outcome was: ${{ steps.sync.outcome }}"
+            exit 1
+          fi
+          echo "Action failed as expected"
