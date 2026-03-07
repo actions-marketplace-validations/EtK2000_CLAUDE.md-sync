@@ -1,4 +1,4 @@
-# claude-md-sync
+# CLAUDE.md-sync
 
 > **Warning:** This project is vibecoded slop. Proceed with caution.
 
